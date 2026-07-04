@@ -1,0 +1,5 @@
+# claude
+/.claude
+
+# release-please writes this; its release PRs must not trip the format gate
+/CHANGELOG.md
