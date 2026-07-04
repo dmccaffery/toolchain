@@ -32,7 +32,7 @@ permissions: {}
 
 jobs:
   release:
-    uses: bitwise-media-group/github-workflows/.github/workflows/release.yaml@f327fb9c8287ef3842ea7c40b3b5ccb4071f5d7c # v4.2.0
+    uses: bitwise-media-group/github-workflows/.github/workflows/release.yaml@a28e6738bc4f912322f9e66e9e90e7de789c4ad3 # v4.3.1
     # Ceiling for the reusable workflow's jobs. GitHub resolves a reusable
     # workflow's permissions as the union of every job and ignores `if:`, so the
     # caller must grant the (here-skipped) goreleaser and docs jobs' scopes too —
