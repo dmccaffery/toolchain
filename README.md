@@ -11,7 +11,7 @@ See [RECOMMENDATION.md](RECOMMENDATION.md) for the design rationale and the per-
 make/
 ├── fragments/          # composable building blocks, one capability each
 │   ├── common.mk       #   .DEFAULT_GOAL, help, commit, .NOTPARALLEL
-│   ├── gotools.mk      #   go install pinned CLIs from .<tool>-version into .bin/
+│   ├── tools.mk        #   install pinned CLIs from mise.toml/mise.lock into .bin/
 │   ├── license.mk      #   LICENSE_HOLDER, .licenseignore, license / license-check
 │   ├── node.mk         #   node_modules sentinel, fmt-prose / lint-prose
 │   ├── go.mk           #   version stamping, tidy, go-{fmt,lint,test,build}, snapshot, release, fuzz
@@ -77,47 +77,54 @@ list what it exposes.
 Canonical targets are **pure prerequisite aggregators** (no recipe), so a repo extends them by adding prerequisites —
 `build: ui`, `pr: docs`, `lint: my-extra` — without touching the library.
 
-## Go developer tools
+## Developer tools
 
-The pinned Go CLIs (`addlicense`, `golangci-lint`, `govulncheck`, `gotestsum`, `gocover-cobertura`, `goreleaser`,
-`syft`, `tflint`, `terraform-docs`, `actionlint`, `evolve`) are **not** vendored through a `tools/go.mod`. `go tool`
-management is deliberately avoided — golangci-lint in particular breaks under it and its maintainers document that as
-unsupported. Instead:
+The pinned CLIs (`addlicense`, `golangci-lint`, `govulncheck`, `gotestsum`, `goreleaser`, `syft`, `terraform`, `tflint`,
+`terraform-docs`, `actionlint`, `evolve`, `dotty`, `prettier`, `markdownlint-cli2`) are **not** vendored through a
+`tools/go.mod` or a `package.json`. `go tool` management is deliberately avoided — golangci-lint in particular breaks
+under it and its maintainers document that as unsupported — and a repo whose only Node use was the prose linters needs
+no npm plumbing at all. Instead:
 
-- each tool is pinned in a `.<tool>-version` file **at the root of this library** as `<version> <commit-sha>` — the
-  readable tag plus the immutable git SHA it resolved to (`.golangci-lint-version` → `v2.12.2 c0d3ddc9…`), exactly as we
-  pin GitHub Actions;
-- `fragments/gotools.mk` `go install`s the tool **by SHA** (not the tag) into a repo-local `.bin/` the first time a
-  target needs it, and reinstalls it when the pin changes. Pinning the SHA means a moved or re-pointed upstream tag
-  cannot substitute different code; Go's checksum database verifies the fetch on top;
-- bumping a tool for the **whole fleet** is one commit here (the daily updater below, or a hand-edit) + a submodule bump
-  in the consumers.
+- every tool is pinned in `mise.toml` **at the root of this library**, with per-platform sha256 checksums (and, where
+  the publisher provides it, cosign/SLSA/GitHub-attestation provenance) locked in `mise.lock`. `locked = true` means
+  [mise](https://mise.jdx.dev) refuses to install anything the lockfile doesn't cover, so a moved or re-pointed upstream
+  tag cannot substitute different code;
+- most tools install as verified prebuilt release binaries. The exceptions install through their language ecosystems
+  using runtimes mise itself provisions from the pins: govulncheck compiles via `go install` (Go checksum database) with
+  the pinned Go, and prettier/markdownlint-cli2 install from the npm registry with the pinned Node — so no system Go or
+  Node is needed. govulncheck stays in the library (not just CI) to keep `make lint` and the CI gate in parity;
+  gocover-cobertura is gone entirely: Codecov ingests Go's native coverage profile directly;
+- `fragments/tools.mk` installs a tool into mise's shared per-machine store the first time a target needs it and
+  symlinks it into the repo-local `.bin/`, refreshing the link when the pins change;
+- bumping a tool for the **whole fleet** is one commit here (the daily updater below, or a hand-edit of `mise.toml` +
+  `mise lock`) + a submodule bump in the consumers. That includes the tooling runtimes themselves (`go = "1.26.4"`,
+  `node = "24.18.0"`), which replaced the old `.go-version` / `.node-version` markers.
 
-A consuming repo therefore needs **zero** tool configuration. It can still pin a one-off version with
-`golangci-lint_VERSION := v2.13.0` before the include.
+A consuming repo therefore needs **zero** tool configuration — just `mise` on PATH (`brew install mise`). It can still
+substitute its own binary for a one-off by setting e.g. `GOLANGCI_LINT := /path/to/golangci-lint` before the include.
 
-Consuming repos should add `.bin/` (and `coverage/`) to `.gitignore`. The Go toolchain that runs `go install` comes from
-the repo's own `go.mod` (Go products) or, for non-Go repos, from `make/.go-version` via the reusable CI's tooling
-setup-go step.
+Consuming repos should add `.bin/` (and `coverage/`) to `.gitignore`.
 
-Because the pins live in `.<tool>-version` files rather than a `go.mod`, Dependabot's gomod ecosystem no longer bumps
-them. `.github/workflows/update-go-tools.yaml` replaces that: it runs `scripts/update-go-tools.sh` daily, which bumps
-each pin (version **and** SHA) to the newest release that is at least 7 days old — a Dependabot-style cooldown — and
-opens a single `fix(deps):` PR. Run it by hand with `./scripts/update-go-tools.sh` (or `--check` to just report).
+Dependabot has no mise ecosystem, so `.github/workflows/update-tools.yaml` replaces it: it runs `mise upgrade --bump`
+daily, which honours `minimum_release_age = "7d"` — a release must be at least 7 days old before it is adopted, a
+Dependabot-style cooldown — re-locks the checksums with `mise lock`, and opens a single `fix(deps):` PR. Run it by hand
+with `mise upgrade --bump && mise lock` in this directory (or `mise outdated` to just report).
 
 ## Other conventions the library assumes
 
 - **License holder** is `BitWise Media Group Ltd` (override `LICENSE_HOLDER`).
-- **npm prose scripts** are named `format`, `format:check`, `lint`, `lint:fix` (prettier + markdownlint). Node Actions
-  add `check`, `check:fix`, `typecheck`, `build`, `test:coverage` (biome + rollup + vitest).
+- **Prose linting needs no `package.json`**: `fmt-prose` / `lint-prose` run the mise-pinned prettier + markdownlint-cli2
+  against the repo's `.prettierrc.yaml` / `.prettierignore` / `.markdownlint-cli2.yaml` (which also declares the globs
+  markdownlint scans). Node Action **npm scripts** are named `check`, `check:fix`, `typecheck`, `build`, `test:coverage`
+  (biome + rollup + vitest).
 - **Overridable knobs** (`APP`, `APP_PKG`, `MODULE`, `BUILD_TAGS`, `NPM_CI_FLAGS`, `TF_RUN`, `TOOLS_BIN`,
-  `<tool>_VERSION`, …) are set in the repo `Makefile` _before_ the `include`.
+  `GOLANGCI_LINT`, …) are set in the repo `Makefile` _before_ the `include`.
 
 ## Knobs by fragment
 
 | Fragment       | Key variables                                                                                                 |
 | -------------- | ------------------------------------------------------------------------------------------------------------- |
-| `gotools.mk`   | `TOOLS_BIN`, `MK_ROOT`, `<tool>_VERSION` (e.g. `golangci-lint_VERSION`)                                       |
+| `tools.mk`     | `TOOLS_BIN`, `MK_ROOT`, per-tool binary overrides (e.g. `GOLANGCI_LINT := /path`)                             |
 | `license.mk`   | `LICENSE_HOLDER`, `LICENSE_IGNORE`                                                                            |
 | `node.mk`      | `NPM_CI_FLAGS`                                                                                                |
 | `go.mk`        | `APP`, `APP_PKG`, `MODULE`, `VERSION`, `VERSION_PKG`, `LDFLAGS`, `BUILD_TAGS`, `FUZZ`, `FUZZ_PKG`, `FUZZTIME` |

@@ -4,5 +4,5 @@
 include markdown-lib.mk
 
 # This repo is nothing but workflows and Makefiles, so also lint the workflows
-# with the pinned actionlint (from gotools.mk).
+# with the pinned actionlint (from tools.mk).
 lint: actionlint

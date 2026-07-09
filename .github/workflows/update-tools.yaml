@@ -1,0 +1,107 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# Daily cooldown updater for the pinned developer CLIs in mise.toml/mise.lock.
+# `mise upgrade --bump` honours the config's `minimum_release_age = "7d"`, so a
+# release must be at least 7 days old before it is adopted — the same
+# Dependabot-style cooldown the old scripts/update-tools.sh implemented by
+# hand against the Go module proxy. `mise lock` then re-resolves the per-platform
+# checksums (and provenance) for every platform in the lockfile. The bumps roll
+# into a single pull request on a stable branch (force-updated each run, so the
+# PR always reflects the current set of available updates) and land as
+# `fix(deps):` so release-please cuts a patch and the new pins propagate to
+# consumers via their `make` submodule.
+#
+# Human-reviewed by design (supply-chain sensitive): the PR is authored by
+# GITHUB_TOKEN and is not auto-merged.
+name: Update Tools
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # daily at 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      cooldown-days:
+        description: Minimum age (days) a release must have before it is adopted.
+        required: false
+        default: "7"
+
+permissions:
+  # push the update branch
+  contents: write
+  # open/update the pull request
+  pull-requests: write
+
+concurrency:
+  group: update-tools
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: bot/update-tools
+      # Overrides mise.toml's minimum_release_age when dispatched by hand.
+      MISE_MINIMUM_RELEASE_AGE: ${{ github.event.inputs.cooldown-days || '7' }}d
+      GH_TOKEN: ${{ github.token }}
+      # mise resolves github:-backend releases via the GitHub API; unauthenticated
+      # calls rate-limit on shared runners and silently skip lockfile entries
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # keep the token so `git push` can update the branch below
+
+      - name: Set up mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          version: 2026.7.3
+          # sha256 of mise-v2026.7.3-linux-x64.tar.gz, from the release's SHASUMS256.txt
+          sha256: 4cd83913f590ae3c7e06b1f49dc19ad521c284b6d82652782e1444b63f260c25
+          install: false # nothing to install yet — upgrade below does the work
+
+      - name: Apply available tool updates
+        id: update
+        run: |
+          set -euo pipefail
+          mise trust --quiet mise.toml
+          mise upgrade --bump
+          mise lock
+          if git diff --quiet -- mise.toml mise.lock; then
+            echo "all tool pins are up to date (cooldown ${MISE_MINIMUM_RELEASE_AGE})"
+            exit 0
+          fi
+          # one "tool: old -> new" line per bumped pin, for the PR body
+          updates="$(git diff -U0 -- mise.toml | awk -F'"' '
+            /^-"/ { old[$2] = $4 }
+            /^\+"/ { if ($2 in old) printf "%s: %s -> %s\n", $2, old[$2], $4 }')"
+          {
+            echo "updates<<EOF"
+            printf '%s\n' "$updates"
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Open or update pull request
+        if: steps.update.outputs.updates != ''
+        env:
+          UPDATES: ${{ steps.update.outputs.updates }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git switch -C "$BRANCH"
+          git add -- mise.toml mise.lock
+          git commit -m 'fix(deps): update pinned tool versions' -m "$UPDATES"
+          git push --force origin "$BRANCH" # bot-owned branch, safe to reset
+
+          body="Automated tool version bumps (newest release at least ${MISE_MINIMUM_RELEASE_AGE%d} days old):
+
+          ${UPDATES}"
+
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --body "$body"
+          else
+            gh pr create --base "${GITHUB_REF_NAME}" --head "$BRANCH" \
+              --title 'fix(deps): update pinned tool versions' --body "$body"
+          fi

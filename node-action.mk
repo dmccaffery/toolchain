@@ -16,6 +16,7 @@ MK_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 NPM_CI_FLAGS :=
 
 include $(MK_DIR)fragments/common.mk
+include $(MK_DIR)fragments/tools.mk
 include $(MK_DIR)fragments/node.mk
 include $(MK_DIR)fragments/action.mk
 

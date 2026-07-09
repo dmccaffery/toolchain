@@ -25,21 +25,5 @@ updates:
       actions:
         patterns:
           - actions/*
-
-  # Prettier + markdownlint that `make lint` runs when this repo dogfoods its own
-  # markdown-lib archetype. Local dev tooling only — `build` is release-please-ignored
-  # so these never cut a library release.
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: build
-      prefix-development: build
-      include: scope
-    cooldown:
-      default-days: 7
-    groups:
-      dev-tooling:
-        patterns:
-          - "*"
+# No npm ecosystem: prettier + markdownlint-cli2 are mise pins (mise.toml), kept
+# fresh by the update-tools workflow with the same 7-day cooldown.

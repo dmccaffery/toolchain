@@ -1,5 +1,5 @@
 # license.mk — SPDX header injection/verification via addlicense.
-# Requires gotools.mk (provides $(ADDLICENSE), installed from .addlicense-version).
+# Requires tools.mk (provides $(ADDLICENSE), installed from the mise.toml pins).
 ifndef MK_LICENSE_INCLUDED
 MK_LICENSE_INCLUDED := 1
 

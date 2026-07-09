@@ -2,8 +2,8 @@
 #
 # Set APP (output binary) and APP_PKG (main package) in the repo Makefile before
 # the include. Everything else has a sensible default and is overridable.
-# Requires gotools.mk (provides $(GOLANGCI_LINT), $(GOVULNCHECK), $(GOTESTSUM),
-# $(GOCOVER_COBERTURA), $(GORELEASER), $(SYFT), installed from .<tool>-version pins).
+# Requires tools.mk (provides $(GOLANGCI_LINT), $(GOVULNCHECK), $(GOTESTSUM),
+# $(GORELEASER), $(SYFT), installed from the mise.toml pins).
 ifndef MK_GO_INCLUDED
 MK_GO_INCLUDED := 1
 
@@ -42,20 +42,20 @@ go-fmt: $(GOLANGCI_LINT)
 	@ go fmt ./...
 	@ $(GOLANGCI_LINT) run --fix
 
-# Check-mode pass wired into the `lint` aggregate.
+# Check-mode pass wired into the `lint` aggregate. govulncheck stays here (not
+# only in CI) so `make lint` and the CI gate check the same things.
 go-lint: $(GOLANGCI_LINT) $(GOVULNCHECK)
 	@ $(GOLANGCI_LINT) run
 	@ $(GOVULNCHECK) ./...
 
 # -covermode=atomic is the race-safe counter mode -race requires. gotestsum runs
 # the suite and writes a JUnit report in one pass (propagating the exit code a
-# bare `go test | …` pipe would swallow); gocover-cobertura turns the profile
-# into Cobertura XML. coverage/ is where the reusable CI workflow uploads from.
-go-test: $(GOTESTSUM) $(GOCOVER_COBERTURA)
+# bare `go test | …` pipe would swallow). Codecov ingests the native Go profile
+# directly; coverage/ is where the reusable CI workflow uploads from.
+go-test: $(GOTESTSUM)
 	@ mkdir -p coverage
 	@ $(GOTESTSUM) --junitfile coverage/junit.xml -- \
 		-race -covermode=atomic -coverprofile=coverage/coverage.out ./...
-	@ $(GOCOVER_COBERTURA) <coverage/coverage.out >coverage/cobertura-coverage.xml
 
 go-build:
 	@ CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -ldflags "$(LDFLAGS)" -o $(APP) $(APP_PKG)

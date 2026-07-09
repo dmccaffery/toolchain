@@ -12,6 +12,7 @@ MK_NODE_LIB_INCLUDED := 1
 
 MK_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 include $(MK_DIR)fragments/common.mk
+include $(MK_DIR)fragments/tools.mk
 include $(MK_DIR)fragments/node.mk
 
 .PHONY: lib-lint lib-build lint build test e2e ci pr

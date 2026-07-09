@@ -4,8 +4,9 @@
 # The make library dogfoods its own markdown-lib archetype. This thin caller runs
 # the reusable CI, which executes the canonical `make lint` / `build` / `test`
 # gates — here that is addlicense + prettier + markdownlint + actionlint, with
-# build/test as no-ops. Go tooling (addlicense, actionlint) is set up from the
-# repo-root .go-version by the reusable workflow's tooling setup-go step.
+# build/test as no-ops. The pinned tooling (addlicense, actionlint) installs via
+# mise from the repo-root mise.toml/mise.lock; the reusable workflow's Setup mise
+# step puts a pinned mise on PATH.
 #
 # Pinned to a full commit SHA (tag in the comment); Dependabot keeps it fresh.
 name: Continuous Integration

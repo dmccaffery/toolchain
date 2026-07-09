@@ -1,0 +1,59 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+#
+# Pinned developer CLIs for the whole fleet, installed and verified by mise
+# (https://mise.jdx.dev). This file + mise.lock replace the old .<tool>-version
+# pin files; fragments/tools.mk installs from here into a repo-local .bin/.
+#
+# Backends are spelled out explicitly (aqua:/ubi:/github:/go:) so the trust path
+# for each tool is pinned and cannot drift with registry default changes. Every
+# tool but govulncheck is a prebuilt release binary: sha256 checksums are locked
+# per platform in mise.lock and verified on every install, plus cosign/SLSA/
+# GitHub-attestation verification where the publisher provides it (all on by
+# default). `locked = true` refuses any install the lockfile doesn't cover.
+#
+# govulncheck publishes no binaries, so it compiles via `go install` (Go module
+# proxy + checksum database) using the Go toolchain pinned below — mise installs
+# that toolchain itself (checksum-verified core backend), so nothing here needs a
+# system Go. It stays in the library, not just CI, so `make lint` and the CI gate
+# stay in parity.
+#
+# prettier and markdownlint-cli2 are npm packages with no standalone binaries, so
+# they install from the npm registry (npm: backend) using the Node runtime pinned
+# below — again provisioned by mise, so repos need no package.json just to lint
+# prose. Top-level versions are exact; unlike a package-lock.json, transitive npm
+# dependencies are not pinned (prettier has none; markdownlint-cli2's tree is
+# small). mise forwards minimum_release_age into transitive resolution (npm >=
+# 11.10 --min-release-age), so even transitives can't pull a release younger than
+# the cooldown. npm.package_manager is pinned to npm because the "auto" default
+# silently prefers aube wherever it happens to be installed — same resolution on
+# every machine matters more than install speed for two packages.
+#
+# Updates: the daily update-tools workflow runs `mise upgrade --bump`, which
+# honours minimum_release_age below — a release must be at least 7 days old
+# before it is adopted (Dependabot-style cooldown), giving the ecosystem time to
+# flag a malicious or broken release. Bumps land as a human-reviewed PR.
+
+[settings]
+lockfile = true
+locked = true
+minimum_release_age = "7d"
+npm.package_manager = "npm"
+
+[tools]
+"go" = "1.26.4"
+"node" = "24.18.0"
+"aqua:anchore/syft" = "1.45.1"
+"aqua:golangci/golangci-lint" = "2.12.2"
+"aqua:goreleaser/goreleaser" = "2.16.0"
+"aqua:gotestyourself/gotestsum" = "1.13.0"
+"aqua:hashicorp/terraform" = "1.15.7"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:terraform-docs/terraform-docs" = "0.24.0"
+"aqua:terraform-linters/tflint" = "0.63.1"
+"github:bitwise-media-group/dotty" = "0.1.1"
+"github:bitwise-media-group/evolve" = "0.5.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.3.0"
+"npm:markdownlint-cli2" = "0.22.1"
+"npm:prettier" = "3.8.5"
+"ubi:google/addlicense" = "1.2.0"
