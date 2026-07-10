@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0](https://github.com/bitwise-media-group/make/compare/v1.1.0...v2.0.0) (2026-07-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tasks:** consumer Makefiles must remount the submodule at .mise/ (git mv make .mise + .gitmodules), replace `include make/<archetype>.mk` with `include .mise/mise.mk`, and add a root mise.toml declaring the archetype include and [vars]; fragments/ and the <archetype>.mk files no longer exist. The reusable CI workflow must gate its make matrix on task existence (mise tasks ls --name-only) before consumers migrate, since archetypes no longer stub absent targets. Repo-local prose configs become optional overrides of the house defaults shipped here.
+* **tools:** consumers need mise on PATH (brew install mise); the per-repo <tool>_VERSION / <tool>_SHA pin overrides are gone (substitute a binary by setting its path variable, e.g. GOLANGCI_LINT := /path, before the include); go-test emits coverage/coverage.out instead of Cobertura XML; and fmt-prose/lint-prose run the mise-pinned prettier + markdownlint-cli2 directly instead of npm scripts -- repos whose package.json existed only for the prose linters can delete it (drop the format/format:check/lint/lint:fix scripts and the prettier/markdownlint-cli2 devDependencies everywhere else). Requires the github-workflows mise/coverage changes -- merge that repo first, then bump the reusable-workflow pins here.
+
+### Features
+
+* **tasks:** replace the Makefile fragment library with mise tasks ([fbc23d8](https://github.com/bitwise-media-group/make/commit/fbc23d85b4bc260341655e0be2dd4f533b6cebcf))
+* **tools:** migrate tool pinning from .&lt;tool&gt;-version files to mise ([b2d10cc](https://github.com/bitwise-media-group/make/commit/b2d10cc9ea1b110ad980ea3d059f2d8771d5ade8))
+
+
+### Bug Fixes
+
+* **ci:** pin the mise binary hash, not the tarball hash ([440548f](https://github.com/bitwise-media-group/make/commit/440548f7e582ba6a8cb2032fcdb520a9d3f55a1b))
+
 ## [1.1.0](https://github.com/bitwise-media-group/make/compare/v1.0.0...v1.1.0) (2026-07-04)
 
 
