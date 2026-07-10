@@ -1,131 +1,136 @@
 # make
 
-Shared Makefiles for the bitwise-media-group ecosystem. Each repo consumes this library as a git submodule mounted at
-`make/` (bumped by Dependabot's `gitsubmodule` ecosystem) and reduces its own `Makefile` to a few lines.
+Shared build tasks for the bitwise-media-group ecosystem, defined as [mise](https://mise.jdx.dev) tasks with a thin
+Makefile shim on top. Each repo consumes this library as a git submodule mounted at `.mise/` (bumped by Dependabot's
+`gitsubmodule` ecosystem) and reduces its own `Makefile` to one include and its own mise config to a few lines.
 
-See [RECOMMENDATION.md](RECOMMENDATION.md) for the design rationale and the per-repo migration map.
+See [RECOMMENDATION.md](RECOMMENDATION.md) for the original design rationale and the per-repo migration map (its
+Makefile-fragment mechanics are superseded by the mise-task layout described here).
 
 ## Layout
 
 ```text
-make/
-├── fragments/          # composable building blocks, one capability each
-│   ├── common.mk       #   .DEFAULT_GOAL, help, commit, .NOTPARALLEL
-│   ├── tools.mk        #   install pinned CLIs from mise.toml/mise.lock into .bin/
-│   ├── license.mk      #   LICENSE_HOLDER, .licenseignore, license / license-check
-│   ├── node.mk         #   node_modules sentinel, fmt-prose / lint-prose
-│   ├── go.mk           #   version stamping, tidy, go-{fmt,lint,test,build}, snapshot, release, fuzz
-│   ├── docs.mk         #   zensical sync / docs-build / serve (uv)
-│   ├── action.mk       #   biome + tsc + rollup + vitest helpers
-│   ├── terraform.mk    #   init / plan / apply / tf-{fmt,lint,docs}
-│   └── noop.mk         #   build / test / e2e no-ops
-└── <archetype>.mk      # wires fragments into the canonical contract
-    ├── go-cli.mk
-    ├── node-action.mk
-    ├── node-lib.mk
-    ├── docs-site.mk
-    ├── markdown-lib.mk
-    └── terraform.mk
+make/                     # this repo == the consumer's .mise/ directory
+├── config.toml           # shared config: [settings], [tools] pins, [vars] knob
+│                         #   defaults, and the universal tasks (license, prose
+│                         #   lint, commit, actionlint); consumers load it
+│                         #   natively as .mise/config.toml
+├── mise.lock              # per-platform sha256 + provenance for every pin
+├── tasks/                 # one self-contained task file per archetype
+│   ├── go-cli.toml        #   go build/test/lint/release + zensical docs
+│   ├── node-action.toml   #   biome + tsc + rollup + vitest
+│   ├── node-lib.toml      #   tsup build + type-check
+│   ├── docs-site.toml     #   zensical build/serve
+│   ├── markdown-lib.toml  #   prose + license only
+│   └── terraform.toml     #   init/plan/apply + tf fmt/lint/docs
+└── mise.mk                # the whole make surface: thin forwarders to mise
 ```
 
 ## Usage
 
-Add the submodule once:
+Add the submodule once, mounted at `.mise/`:
 
 ```sh
-git submodule add https://github.com/bitwise-media-group/make.git make
+git submodule add https://github.com/bitwise-media-group/make.git .mise
 ```
 
-Then reduce the repo's `Makefile` to its archetype plus any per-repo knobs:
+Create a root `mise.toml` that picks the archetype and sets any knobs, then reduce the `Makefile` to one line:
+
+```toml
+# mise.toml — a Go CLI (dotty, evolve, gh-claude)
+[vars]
+app = "dotty"
+app_pkg = "./cmd"
+
+[task_config]
+includes = [".mise/tasks/go-cli.toml"]
+
+# repo-local tasks live here too, e.g. the app-specific CLI reference:
+[tasks.docs]
+description = "regenerate the CLI reference and build the docs site"
+dir = "{{cwd}}"
+run = ["mise run build", "./dotty docs --out docs/cli --format markdown", "mise run docs-build"]
+```
 
 ```makefile
-# a Go CLI (dotty, evolve, gh-claude)
-APP     := dotty
-APP_PKG := ./cmd
-include make/go-cli.mk
+# Makefile — the whole thing
+include .mise/mise.mk
 
-# docs is app-specific (regenerates the CLI reference), so it stays here and is
-# appended to the pull-request gate:
-docs: build ## regenerate the CLI reference and build the docs site
- @ ./$(APP) docs --out docs/cli --format markdown
- @ $(MAKE) docs-build
+# append repo-local work to a canonical gate (runs before `mise run pr`):
 pr: docs
 ```
 
-```makefile
-# a Node Action (ff-merge, setup-evolve)
-include make/node-action.mk
-```
-
-```makefile
-# a Markdown/YAML library (github-workflows, skills)
-include make/markdown-lib.mk
-```
-
-```makefile
-# a Terraform environment (cloud-accounts/environments/<name>/)
-include ../../make/terraform.mk
-```
+Run `mise trust --all` once per clone (CI trusts the workspace automatically), and `make help` (or `mise tasks`) to list
+what the repo exposes. Because the Makefile only forwards, `make <anything>` and `mise run <anything>` are
+interchangeable — the Makefile exists for the CI contract and muscle memory, and the pipelines can move to invoking mise
+natively without touching this library.
 
 ## The contract
 
 The reusable CI workflow (`bitwise-media-group/github-workflows`) runs a matrix of **`make lint`**, **`make build`**,
-**`make test`** (and opt-in **`make e2e`**); release drives GoReleaser / Zensical directly. Every archetype provides
-those canonical targets, plus **`fmt`**, **`ci`**, and **`pr`** for local use. Run `make help` in any consuming repo to
-list what it exposes.
+**`make test`** (and opt-in **`make e2e`**), discovering which of those tasks a repo actually defines via
+`mise tasks ls --name-only` and skipping the rest; release drives GoReleaser / Zensical directly. There are therefore
+**no no-op stubs anywhere**: an archetype defines only real work (markdown-lib has no `build`/`test` at all), and a repo
+that grows tests or an e2e suite just defines that task in its root `mise.toml [tasks]`. Every archetype also provides
+**`fmt`**, **`ci`**, and **`pr`** for local use.
 
-Canonical targets are **pure prerequisite aggregators** (no recipe), so a repo extends them by adding prerequisites —
-`build: ui`, `pr: docs`, `lint: my-extra` — without touching the library.
+Extension works both ways:
+
+- **make-side** — add a prerequisite in the repo Makefile (`pr: docs`, `lint: my-extra`). Prerequisites run **before**
+  the forwarded task (the old library ran appended targets after `commit`; if ordering matters more precisely, use the
+  mise-side mechanism).
+- **mise-side** — add or redefine tasks in the repo's root `mise.toml [tasks]`. Task merging is whole-task replacement,
+  so a redefined `pr` fully controls its sequence.
+
+Aggregates (`fmt`, `lint`, `ci`, `pr`) are sequential task composites, so mutating passes never race and `fmt` always
+precedes `lint` inside `pr`.
 
 ## Developer tools
 
-The pinned CLIs (`addlicense`, `golangci-lint`, `govulncheck`, `gotestsum`, `goreleaser`, `syft`, `terraform`, `tflint`,
-`terraform-docs`, `actionlint`, `evolve`, `dotty`, `prettier`, `markdownlint-cli2`) are **not** vendored through a
-`tools/go.mod` or a `package.json`. `go tool` management is deliberately avoided — golangci-lint in particular breaks
-under it and its maintainers document that as unsupported — and a repo whose only Node use was the prose linters needs
-no npm plumbing at all. Instead:
+Every tool (`addlicense`, `golangci-lint`, `govulncheck`, `gotestsum`, `goreleaser`, `syft`, `terraform`, `tflint`,
+`terraform-docs`, `actionlint`, `evolve`, `dotty`, `prettier`, `markdownlint-cli2`) is pinned in `config.toml` with
+per-platform sha256 checksums (and, where the publisher provides it, cosign/SLSA/GitHub-attestation provenance) locked
+in `mise.lock`. Tasks run with the pinned tools already on PATH — there is no `.bin/`, no `tools/go.mod`, no
+`package.json` for linters, and no tool-path plumbing anywhere. mise installs a tool into its shared per-machine store
+the first time a task needs it (verifying the checksum) and reuses it across every repo.
 
-- every tool is pinned in `mise.toml` **at the root of this library**, with per-platform sha256 checksums (and, where
-  the publisher provides it, cosign/SLSA/GitHub-attestation provenance) locked in `mise.lock`. `locked = true` means
-  [mise](https://mise.jdx.dev) refuses to install anything the lockfile doesn't cover, so a moved or re-pointed upstream
-  tag cannot substitute different code;
-- most tools install as verified prebuilt release binaries. The exceptions install through their language ecosystems
-  using runtimes mise itself provisions from the pins: govulncheck compiles via `go install` (Go checksum database) with
-  the pinned Go, and prettier/markdownlint-cli2 install from the npm registry with the pinned Node — so no system Go or
-  Node is needed. govulncheck stays in the library (not just CI) to keep `make lint` and the CI gate in parity;
-  gocover-cobertura is gone entirely: Codecov ingests Go's native coverage profile directly;
-- `fragments/tools.mk` installs a tool into mise's shared per-machine store the first time a target needs it and
-  symlinks it into the repo-local `.bin/`, refreshing the link when the pins change;
-- bumping a tool for the **whole fleet** is one commit here (the daily updater below, or a hand-edit of `mise.toml` +
-  `mise lock`) + a submodule bump in the consumers. That includes the tooling runtimes themselves (`go = "1.26.4"`,
-  `node = "24.18.0"`), which replaced the old `.go-version` / `.node-version` markers.
+- The tooling runtimes themselves are pins (`go`, `node`), provisioned by mise — no system Go or Node is needed.
+- Bumping a tool for the **whole fleet** is one commit here (the daily updater below, or a hand-edit of `config.toml` +
+  `mise lock`) plus a submodule bump in the consumers.
+- A repo can override a tool version (or add tools) in its root `mise.toml [tools]` — the root config wins.
+- **Never run `mise lock` or `mise upgrade` in a consumer repo**: the lockfile lives in this library, so a consumer-side
+  re-lock writes into the submodule working tree.
 
-A consuming repo therefore needs **zero** tool configuration — just `mise` on PATH (`brew install mise`). It can still
-substitute its own binary for a one-off by setting e.g. `GOLANGCI_LINT := /path/to/golangci-lint` before the include.
-
-Consuming repos should add `.bin/` (and `coverage/`) to `.gitignore`.
+Consuming repos should keep `coverage/` (and `node_modules/`) in `.gitignore`; `.bin/` is no longer created.
 
 Dependabot has no mise ecosystem, so `.github/workflows/update-tools.yaml` replaces it: it runs `mise upgrade --bump`
 daily, which honours `minimum_release_age = "7d"` — a release must be at least 7 days old before it is adopted, a
 Dependabot-style cooldown — re-locks the checksums with `mise lock`, and opens a single `fix(deps):` PR. Run it by hand
 with `mise upgrade --bump && mise lock` in this directory (or `mise outdated` to just report).
 
+## Knobs
+
+Two tiers, replacing the old before-the-include make variables:
+
+| tier                           | where                   | examples                                                                                         |
+| ------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------ |
+| structural (set once per repo) | root `mise.toml [vars]` | `app`, `app_pkg`, `build_tags`, `version_pkg`, `license_holder`, `tf_run`                        |
+| per-invocation (runtime)       | environment variables   | `VERSION`, `COMMIT`, `DATE`, `LDFLAGS`, `MODULE`, `FUZZ`, `FUZZTIME`, `FUZZ_PKG`, `NPM_CI_FLAGS` |
+
+`make build VERSION=1.2.3` still works — make exports command-line variables to the forwarded `mise run`, and the go-cli
+scripts also accept the old spellings (`APP`, `APP_PKG`, …) from the environment.
+
 ## Other conventions the library assumes
 
-- **License holder** is `BitWise Media Group Ltd` (override `LICENSE_HOLDER`).
-- **Prose linting needs no `package.json`**: `fmt-prose` / `lint-prose` run the mise-pinned prettier + markdownlint-cli2
-  against the repo's `.prettierrc.yaml` / `.prettierignore` / `.markdownlint-cli2.yaml` (which also declares the globs
-  markdownlint scans). Node Action **npm scripts** are named `check`, `check:fix`, `typecheck`, `build`, `test:coverage`
-  (biome + rollup + vitest).
-- **Overridable knobs** (`APP`, `APP_PKG`, `MODULE`, `BUILD_TAGS`, `NPM_CI_FLAGS`, `TF_RUN`, `TOOLS_BIN`,
-  `GOLANGCI_LINT`, …) are set in the repo `Makefile` _before_ the `include`.
-
-## Knobs by fragment
-
-| Fragment       | Key variables                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------- |
-| `tools.mk`     | `TOOLS_BIN`, `MK_ROOT`, per-tool binary overrides (e.g. `GOLANGCI_LINT := /path`)                             |
-| `license.mk`   | `LICENSE_HOLDER`, `LICENSE_IGNORE`                                                                            |
-| `node.mk`      | `NPM_CI_FLAGS`                                                                                                |
-| `go.mk`        | `APP`, `APP_PKG`, `MODULE`, `VERSION`, `VERSION_PKG`, `LDFLAGS`, `BUILD_TAGS`, `FUZZ`, `FUZZ_PKG`, `FUZZTIME` |
-| `terraform.mk` | `TERRAFORM_BINARY`, `TF_RUN`                                                                                  |
+- **License holder** is `BitWise Media Group Ltd` (override `license_holder` in `[vars]`). The license tasks ignore
+  generated/vendored trees (`node_modules/`, `.mise/`, `.claude/`, `.venv/`, `coverage/`) by default; a repo's
+  `.licenseignore` adds to that.
+- **Prose is linted in every archetype, with zero per-repo config**: `fmt`/`lint` always run the pinned prettier +
+  markdownlint-cli2 over all `*.md` from the repo root, excluding generated and vendored content (`CHANGELOG.md`,
+  `node_modules/`, `.mise/`, `.venv/`, `.claude/`). The house defaults are this library's own `.prettierrc.yaml` /
+  `.prettierignore` / `.markdownlint-cli2.yaml`, read from `.mise/` — a repo that commits its own copy of one of those
+  files overrides that file wholesale. Node Action **npm scripts** are named `check`, `check:fix`, `typecheck`, `build`,
+  `test:coverage` (biome + rollup + vitest); biome owns the code, prettier + markdownlint own the markdown.
+- **This repo's own layout is inverted**: `config.toml` sits at the root (it _is_ the consumer's `.mise/`), the dogfood
+  archetype include lives in the root `mise.toml`, and `.mise/` here contains symlinks back to the root files so mise
+  resolves the tools the same way it does in a consumer.

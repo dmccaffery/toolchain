@@ -1,7 +1,7 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# Daily cooldown updater for the pinned developer CLIs in mise.toml/mise.lock.
+# Daily cooldown updater for the pinned developer CLIs in config.toml/mise.lock.
 # `mise upgrade --bump` honours the config's `minimum_release_age = "7d"`, so a
 # release must be at least 7 days old before it is adopted — the same
 # Dependabot-style cooldown the old scripts/update-tools.sh implemented by
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRANCH: bot/update-tools
-      # Overrides mise.toml's minimum_release_age when dispatched by hand.
+      # Overrides config.toml's minimum_release_age when dispatched by hand.
       MISE_MINIMUM_RELEASE_AGE: ${{ github.event.inputs.cooldown-days || '7' }}d
       GH_TOKEN: ${{ github.token }}
       # mise resolves github:-backend releases via the GitHub API; unauthenticated
@@ -64,15 +64,17 @@ jobs:
         id: update
         run: |
           set -euo pipefail
-          mise trust --quiet mise.toml
+          # trust both layers: the shared config (tools, loaded via the
+          # .mise/config.toml symlink) and the dogfood root mise.toml (tasks)
+          mise trust --quiet --all
           mise upgrade --bump
           mise lock
-          if git diff --quiet -- mise.toml mise.lock; then
+          if git diff --quiet -- config.toml mise.lock; then
             echo "all tool pins are up to date (cooldown ${MISE_MINIMUM_RELEASE_AGE})"
             exit 0
           fi
           # one "tool: old -> new" line per bumped pin, for the PR body
-          updates="$(git diff -U0 -- mise.toml | awk -F'"' '
+          updates="$(git diff -U0 -- config.toml | awk -F'"' '
             /^-"/ { old[$2] = $4 }
             /^\+"/ { if ($2 in old) printf "%s: %s -> %s\n", $2, old[$2], $4 }')"
           {
@@ -91,7 +93,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
           git switch -C "$BRANCH"
-          git add -- mise.toml mise.lock
+          git add -- config.toml mise.lock
           git commit -m 'fix(deps): update pinned tool versions' -m "$UPDATES"
           git push --force origin "$BRANCH" # bot-owned branch, safe to reset
 

@@ -1,8 +1,9 @@
-# The make library dogfoods its own markdown-lib archetype: prose lint + license,
-# with build/test/e2e as no-ops. Included by relative path because this *is* the
-# library (consumers use `include make/markdown-lib.mk`).
-include markdown-lib.mk
+# The make library dogfoods its own markdown-lib archetype: the tasks are wired
+# via the root mise.toml (see the comment there for why the layout is inverted
+# relative to consumers, whose Makefiles say `include .mise/mise.mk`).
+include mise.mk
 
-# This repo is nothing but workflows and Makefiles, so also lint the workflows
-# with the pinned actionlint (from tools.mk).
+# This repo is nothing but workflows and task files, so also lint the workflows
+# with the pinned actionlint — a make-side prerequisite extension (it runs
+# `mise run actionlint` via the .DEFAULT forwarder before `mise run lint`).
 lint: actionlint

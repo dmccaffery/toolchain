@@ -1,0 +1,171 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+#
+# The fleet's shared mise config: pinned developer CLIs, knob defaults, and the
+# universal tasks every archetype uses. Consumer repos mount this library as a
+# git submodule at `.mise/`, so mise loads this file natively as
+# `.mise/config.toml` — no per-repo tool setup, no symlinks. The consumer's own
+# root mise.toml layers on top (higher precedence): it picks an archetype via
+# `[task_config] includes = [".mise/tasks/<archetype>.toml"]`, overrides [vars],
+# and adds repo-local tasks.
+#
+# IMPORTANT: this file must never contain [task_config] — its include paths
+# would resolve against each consumer's repo root and break. Archetype selection
+# always lives in the consumer's root mise.toml (this repo's own root mise.toml
+# dogfoods the same way).
+#
+# Backends are spelled out explicitly (aqua:/github:/go:) so the trust path
+# for each tool is pinned and cannot drift with registry default changes. Every
+# tool but govulncheck is a prebuilt release binary: sha256 checksums are locked
+# per platform in mise.lock and verified on every install, plus cosign/SLSA/
+# GitHub-attestation verification where the publisher provides it (all on by
+# default).
+#
+# govulncheck publishes no binaries, so it compiles via `go install` (Go module
+# proxy + checksum database) using the Go toolchain pinned below — mise installs
+# that toolchain itself (checksum-verified core backend), so nothing here needs a
+# system Go. It stays in the library, not just CI, so `mise run lint` and the CI
+# gate stay in parity.
+#
+# prettier and markdownlint-cli2 are npm packages with no standalone binaries, so
+# they install from the npm registry (npm: backend) using the Node runtime pinned
+# below — again provisioned by mise, so repos need no package.json just to lint
+# prose. Top-level versions are exact; unlike a package-lock.json, transitive npm
+# dependencies are not pinned (prettier has none; markdownlint-cli2's tree is
+# small). mise forwards minimum_release_age into transitive resolution (npm >=
+# 11.10 --min-release-age), so even transitives can't pull a release younger than
+# the cooldown. npm.package_manager is pinned to npm because the "auto" default
+# silently prefers aube wherever it happens to be installed — same resolution on
+# every machine matters more than install speed for two packages.
+#
+# Updates: the daily update-tools workflow runs `mise upgrade --bump`, which
+# honours minimum_release_age below — a release must be at least 7 days old
+# before it is adopted (Dependabot-style cooldown), giving the ecosystem time to
+# flag a malicious or broken release. Bumps land as a human-reviewed PR. Never
+# run `mise lock` or `mise upgrade` in a consumer repo: the lockfile lives in
+# this library, and consumer-side writes would land inside the submodule.
+
+[settings]
+lockfile = true
+locked = false
+minimum_release_age = "7d"
+npm.package_manager = "npm"
+
+[tools]
+go = "1.26.5"
+"node" = "24.18.0"
+"aqua:anchore/syft" = "1.45.1"
+"aqua:golangci/golangci-lint" = "2.12.2"
+"aqua:goreleaser/goreleaser" = "2.16.0"
+"aqua:gotestyourself/gotestsum" = "1.13.0"
+"aqua:hashicorp/terraform" = "1.15.7"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:terraform-docs/terraform-docs" = "0.24.0"
+"aqua:terraform-linters/tflint" = "0.63.1"
+"github:bitwise-media-group/dotty" = "0.1.1"
+"github:bitwise-media-group/evolve" = "0.5.0"
+"github:google/addlicense" = "1.2.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.3.0"
+"npm:markdownlint-cli2" = "0.22.1"
+"npm:prettier" = "3.8.5"
+
+# Structural per-repo knobs, referenced as {{vars.name}} in the task files.
+# Consumers override them in their root mise.toml [vars] (higher precedence).
+# Per-invocation values (VERSION, FUZZ, FUZZTIME, NPM_CI_FLAGS, ...) are plain
+# environment variables read inside the task scripts instead.
+[vars]
+# Canonical copyright holder for the whole ecosystem. Do not vary the spelling
+# per repo — a single value here is the point. Override only if a repo genuinely
+# needs a different holder.
+license_holder = "BitWise Media Group Ltd"
+# go-cli: output binary (empty = repo directory name) and main package.
+app = ""
+app_pkg = "."
+# go-cli: extra build tags (e.g. an embedded UI: build_tags = "withui").
+build_tags = ""
+# go-cli: package declaring Version/Commit/BuildDate (empty = <module>/internal/version).
+version_pkg = ""
+# terraform: wrapper that injects secrets/env around terraform — the pinned
+# dotty by default. Set tf_run = "" to call terraform directly.
+tf_run = "dotty env run --"
+
+# Universal tasks shared by every archetype. Each runs in the invoker's
+# directory ({{cwd}}), matching where make recipes used to run. Helper tasks
+# that only exist to be wired into aggregates are hidden, mirroring the old
+# "no ## comment" convention.
+
+# Run an agent-prepared commit batch if one is waiting. The `pr` gate calls this
+# last so a green local run flows straight into the (user-signed) commit.
+[tasks.commit]
+description = "run ./commit.sh (agent-prepared commit batch) if present"
+dir = "{{cwd}}"
+run = "if [ -x ./commit.sh ]; then ./commit.sh; fi"
+
+# House default ignores (generated/vendored trees, incl. the .mise/ submodule)
+# plus one -ignore flag per non-empty line in the repo's .licenseignore
+# (patterns never contain whitespace, so the word-split is safe; set -f keeps
+# the shell from glob-expanding them). A repo with no .licenseignore simply
+# gets the defaults.
+[tasks.license]
+description = "inject SPDX license headers (addlicense)"
+dir = "{{cwd}}"
+run = """
+set -euf
+ignores="-ignore node_modules/** -ignore .mise/** -ignore .claude/** -ignore .venv/** -ignore coverage/**"
+if [ -f .licenseignore ]; then
+  for pattern in $(cat .licenseignore); do ignores="$ignores -ignore $pattern"; done
+fi
+addlicense -l mit -c '{{vars.license_holder}}' -s=only $ignores .
+"""
+
+# Check-mode counterpart wired into the `lint` aggregates.
+[tasks.license-check]
+hide = true
+dir = "{{cwd}}"
+run = """
+set -euf
+ignores="-ignore node_modules/** -ignore .mise/** -ignore .claude/** -ignore .venv/** -ignore coverage/**"
+if [ -f .licenseignore ]; then
+  for pattern in $(cat .licenseignore); do ignores="$ignores -ignore $pattern"; done
+fi
+addlicense -l mit -c '{{vars.license_holder}}' -s=only $ignores -check .
+"""
+
+# Prose format/lint via the pinned prettier + markdownlint-cli2, wired into
+# every archetype: all *.md, excluding generated/vendored content. The house
+# defaults are this library's own .prettierrc.yaml / .prettierignore /
+# .markdownlint-cli2.yaml (read from .mise/ in a consumer); a repo that carries
+# its own copy of a file overrides that file wholesale. Runs from the repo root
+# (config_root) so the whole repo is covered no matter where make is invoked
+# (e.g. a terraform environment subdirectory). Patterns in the house ignore
+# files are deliberately unanchored — prettier and markdownlint resolve them
+# against the invoking repo, not against .mise/.
+[tasks.fmt-prose]
+hide = true
+dir = "{{config_root}}"
+run = """
+set -eu
+pcfg=".prettierrc.yaml";        [ -f "$pcfg" ] || pcfg=".mise/.prettierrc.yaml"
+pign=".prettierignore";         [ -f "$pign" ] || pign=".mise/.prettierignore"
+mcfg=".markdownlint-cli2.yaml"; [ -f "$mcfg" ] || mcfg=".mise/.markdownlint-cli2.yaml"
+prettier --config "$pcfg" --ignore-path .gitignore --ignore-path "$pign" --no-error-on-unmatched-pattern --write "**/*.md"
+markdownlint-cli2 --config "$mcfg" --fix
+"""
+
+[tasks.lint-prose]
+hide = true
+dir = "{{config_root}}"
+run = """
+set -eu
+pcfg=".prettierrc.yaml";        [ -f "$pcfg" ] || pcfg=".mise/.prettierrc.yaml"
+pign=".prettierignore";         [ -f "$pign" ] || pign=".mise/.prettierignore"
+mcfg=".markdownlint-cli2.yaml"; [ -f "$mcfg" ] || mcfg=".mise/.markdownlint-cli2.yaml"
+markdownlint-cli2 --config "$mcfg"
+prettier --config "$pcfg" --ignore-path .gitignore --ignore-path "$pign" --no-error-on-unmatched-pattern --check "**/*.md"
+"""
+
+# Lint the repo's GitHub Actions workflows (no-op where there are none).
+[tasks.actionlint]
+description = "lint .github/workflows with actionlint"
+dir = "{{cwd}}"
+run = "actionlint"

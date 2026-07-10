@@ -1,5 +1,1 @@
-node_modules/**
-.claude/**
-.bin/**
-coverage/**
 commit.sh

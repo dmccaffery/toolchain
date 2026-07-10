@@ -1,5 +1,10 @@
 # Shared Makefiles for the bitwise-media-group ecosystem
 
+> **Superseded in part (2026-07):** the Makefile-fragment/archetype mechanics below (fragments/\*.mk, `.bin/` tool
+> installs, before-the-include knobs) were replaced by mise tasks — see [README.md](README.md). The submodule now mounts
+> at `.mise/` and Makefiles are thin forwarders to `mise run`. The analysis (§1), the submodule-vs-package rationale
+> (§2), and the per-repo migration map (§4) remain accurate as history.
+
 A proposal for what this `make` repository should contain, so that the ~15 sibling repositories can consume a common set
 of Makefile fragments via git submodule (bumped by Dependabot's `gitsubmodule` ecosystem) instead of each maintaining
 its own drifting copy.

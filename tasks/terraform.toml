@@ -1,0 +1,79 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+#
+# terraform — archetype for a Terraform module (cloud-accounts environments,
+# safe-settings). Generalises cloud-accounts' cloud.mk.
+#
+# Every task runs in {{cwd}}: the invoking Makefile typically lives below the
+# repo root (environments/<name>/), and plan/apply must target that module.
+# cloud-accounts keeps its root fan-out aggregator (environments/<name>
+# recursion) unchanged; only the leaf environments adopt this archetype.
+#
+# {{vars.tf_run}} wraps terraform with the pinned dotty (secrets/env injection)
+# by default; set tf_run = "" in the repo's root mise.toml [vars] to call
+# terraform directly. The old TF_RUN_DEPS prerequisite hack is gone — the
+# wrapper is simply on PATH like every other pinned tool.
+#
+# The house prose format/lint is part of fmt/lint like every archetype; it
+# runs from the repo root even when make is invoked in an environment
+# subdirectory, so a repo-wide README sweep rides along with each module.
+
+[init]
+description = "initialise the terraform module"
+dir = "{{cwd}}"
+run = "{{vars.tf_run}} terraform init"
+
+# Backend-less init used by lint (validate needs an initialised module but no
+# remote state).
+[init-no-backend]
+hide = true
+dir = "{{cwd}}"
+run = "{{vars.tf_run}} terraform init -backend=false -input=false"
+
+[plan]
+description = "plan infrastructure changes"
+dir = "{{cwd}}"
+run = "{{vars.tf_run}} terraform plan -out=plan.tfplan"
+
+[apply]
+description = "apply infrastructure changes"
+dir = "{{cwd}}"
+run = [{ task = "plan" }, "{{vars.tf_run}} terraform apply plan.tfplan"]
+
+# Auto-format pass wired into `fmt`.
+[tf-fmt]
+hide = true
+dir = "{{cwd}}"
+run = "terraform fmt -recursive"
+
+# Check-mode pass wired into `lint`.
+[tf-lint]
+hide = true
+dir = "{{cwd}}"
+run = [{ task = "init-no-backend" }, "terraform validate .", "tflint"]
+
+# Doc generation wired into `docs`.
+[tf-docs]
+hide = true
+dir = "{{cwd}}"
+run = "terraform-docs ."
+
+[fmt]
+description = "terraform fmt -recursive + prose format"
+run = [{ task = "tf-fmt" }, { task = "fmt-prose" }]
+
+[lint]
+description = "terraform validate + tflint + prose lint"
+run = [{ task = "tf-lint" }, { task = "lint-prose" }]
+
+[docs]
+description = "generate module docs (terraform-docs)"
+run = [{ task = "tf-docs" }]
+
+[ci]
+description = "the checks the reusable CI workflow runs"
+run = [{ task = "lint" }, { task = "docs" }]
+
+[pr]
+description = "full local gate before a pull request"
+run = [{ task = "fmt" }, { task = "lint" }, { task = "docs" }]
